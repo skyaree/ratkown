@@ -23,7 +23,8 @@ type PTCPTunnel struct {
 	client   *DHClient
 	realm    uint32
 	recvBufs map[uint32][]byte
-	conn     *net.UDPConn
+	recvMu   sync.Mutex
+	conn     UDPConnLike
 	addr     string
 	session  *PTCPSession
 	user     string
@@ -31,7 +32,35 @@ type PTCPTunnel struct {
 	sendMu   sync.Mutex
 }
 
-func newTunnel(c *DHClient, conn *net.UDPConn, addr string, session *PTCPSession) *PTCPTunnel {
+func (t *PTCPTunnel) recvPop(realm uint32) ([]byte, bool) {
+	t.recvMu.Lock()
+	defer t.recvMu.Unlock()
+	b, ok := t.recvBufs[realm]
+	if ok {
+		delete(t.recvBufs, realm)
+	}
+	return b, ok
+}
+
+func (t *PTCPTunnel) recvPush(realm uint32, payload []byte) {
+	t.recvMu.Lock()
+	defer t.recvMu.Unlock()
+	t.recvBufs[realm] = append(t.recvBufs[realm], payload...)
+}
+
+func (t *PTCPTunnel) recvSet(realm uint32, data []byte) {
+	t.recvMu.Lock()
+	defer t.recvMu.Unlock()
+	t.recvBufs[realm] = data
+}
+
+func (t *PTCPTunnel) recvDrain(realm uint32) {
+	t.recvMu.Lock()
+	defer t.recvMu.Unlock()
+	delete(t.recvBufs, realm)
+}
+
+func newTunnel(c *DHClient, conn UDPConnLike, addr string, session *PTCPSession) *PTCPTunnel {
 	return &PTCPTunnel{
 		client:   c,
 		realm:    rand.Uint32(),
@@ -46,9 +75,7 @@ func newTunnel(c *DHClient, conn *net.UDPConn, addr string, session *PTCPSession
 
 func (t *PTCPTunnel) readOneDataForRealm(realm uint32, timeout time.Duration) ([]byte, error) {
 	conn := t.conn
-	if len(t.recvBufs[realm]) > 0 {
-		data := t.recvBufs[realm]
-		delete(t.recvBufs, realm)
+	if data, ok := t.recvPop(realm); ok {
 		return data, nil
 	}
 	conn.SetReadDeadline(time.Now().Add(timeout))
@@ -84,7 +111,7 @@ func (t *PTCPTunnel) readOneDataForRealm(realm uint32, timeout time.Duration) ([
 				continue
 			}
 			if r != realm {
-				t.recvBufs[r] = append(t.recvBufs[r], payload...)
+				t.recvPush(r, payload)
 				t.sendACK()
 				continue
 			}
@@ -131,9 +158,8 @@ func (t *PTCPTunnel) ReadData(timeout time.Duration) ([]byte, error) {
 	conn := t.conn
 	var out []byte
 
-	if len(t.recvBufs[t.realm]) > 0 {
-		out = t.recvBufs[t.realm]
-		delete(t.recvBufs, t.realm)
+	if data, ok := t.recvPop(t.realm); ok {
+		out = data
 	}
 
 	conn.SetReadBuffer(512 * 1024)
@@ -196,7 +222,7 @@ func (t *PTCPTunnel) ReadData(timeout time.Duration) ([]byte, error) {
 				continue
 			}
 			if realm != t.realm {
-				t.recvBufs[realm] = append(t.recvBufs[realm], payload...)
+				t.recvPush(realm, payload)
 				if ackNow {
 					t.sendACK()
 				}
@@ -349,9 +375,7 @@ func (t *PTCPTunnel) readDataSkipDisc(realm uint32, timeout time.Duration) ([]by
 	conn := t.conn
 	deadline := time.Now().Add(timeout)
 
-	if len(t.recvBufs[realm]) > 0 {
-		data := t.recvBufs[realm]
-		delete(t.recvBufs, realm)
+	if data, ok := t.recvPop(realm); ok {
 		return data, nil
 	}
 
@@ -392,7 +416,7 @@ func (t *PTCPTunnel) readDataSkipDisc(realm uint32, timeout time.Duration) ([]by
 				continue
 			}
 			if r != realm {
-				t.recvBufs[r] = append(t.recvBufs[r], payload...)
+				t.recvPush(r, payload)
 				t.sendACK()
 				continue
 			}
@@ -539,9 +563,7 @@ func (t *PTCPTunnel) readHTTPPayload(realm uint32, out []byte, timeout time.Dura
 		conn.SetReadDeadline(time.Time{})
 	}
 
-	if len(t.recvBufs[realm]) > 0 {
-		data := t.recvBufs[realm]
-		delete(t.recvBufs, realm)
+	if data, ok := t.recvPop(realm); ok {
 		return data, nil
 	}
 
@@ -586,7 +608,7 @@ func (t *PTCPTunnel) readHTTPPayload(realm uint32, out []byte, timeout time.Dura
 				continue
 			}
 			if r != realm {
-				t.recvBufs[r] = append(t.recvBufs[r], payload...)
+				t.recvPush(r, payload)
 				t.sendACK()
 				continue
 			}
@@ -598,6 +620,7 @@ func (t *PTCPTunnel) readHTTPPayload(realm uint32, out []byte, timeout time.Dura
 }
 
 func (t *PTCPTunnel) DoHTTPOnRealm(realm uint32, req []byte, timeout time.Duration) ([]byte, error) {
+	t.recvDrain(realm)
 	if err := t.SendDataWithRealm(req, realm); err != nil {
 		return nil, fmt.Errorf("send http on realm: %w", err)
 	}
@@ -730,8 +753,7 @@ func (c *DHIPClient) send(method string, params any, id int, object any, sid ...
 
 func (c *DHIPClient) readPacket(timeout time.Duration) (map[string]any, error) {
 	deadline := time.Now().Add(timeout)
-	buf := c.tunnel.recvBufs[c.realm]
-	delete(c.tunnel.recvBufs, c.realm)
+	buf, _ := c.tunnel.recvPop(c.realm)
 
 	var magicIdx int
 	for {
@@ -742,7 +764,7 @@ func (c *DHIPClient) readPacket(timeout time.Duration) (map[string]any, error) {
 		chunk, err := c.tunnel.readOneDataForRealm(c.realm, time.Until(deadline))
 		if err != nil {
 			if len(buf) > 0 {
-				c.tunnel.recvBufs[c.realm] = buf
+				c.tunnel.recvSet(c.realm, buf)
 			}
 			return nil, fmt.Errorf("dhip read header: %w", err)
 		}
@@ -761,7 +783,7 @@ func (c *DHIPClient) readPacket(timeout time.Duration) (map[string]any, error) {
 		chunk, err := c.tunnel.readOneDataForRealm(c.realm, time.Until(deadline))
 		if err != nil {
 			if len(buf) > 0 {
-				c.tunnel.recvBufs[c.realm] = buf
+				c.tunnel.recvSet(c.realm, buf)
 			}
 			return nil, fmt.Errorf("dhip read body: %w", err)
 		}
@@ -770,7 +792,7 @@ func (c *DHIPClient) readPacket(timeout time.Duration) (map[string]any, error) {
 
 	bodyRaw := buf[32:totalNeeded]
 	if len(buf) > totalNeeded {
-		c.tunnel.recvBufs[c.realm] = buf[totalNeeded:]
+		c.tunnel.recvSet(c.realm, buf[totalNeeded:])
 	}
 
 	if bodyLen == 0 {

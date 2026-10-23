@@ -21,20 +21,30 @@ type NukeSession struct {
 
 func NewNukeSession(tunnel *net.PTCPTunnel, login, pass string) (*NukeSession, error) {
 	var dhipErr error
-	if s, err := newNukeDHIP(tunnel, login, pass); err == nil {
+	if s, err := newNukeDHIP(tunnel, login, pass, 5000); err == nil {
 		return s, nil
 	} else {
 		dhipErr = err
 	}
+	if s, err := newNukeDHIP(tunnel, login, pass, 37777); err == nil {
+		return s, nil
+	}
 	s, rpcErr := newNukeRPC2(tunnel, login, pass)
 	if rpcErr != nil {
-		return nil, fmt.Errorf("dhip 5000: %v rpc 80: %v", dhipErr, rpcErr)
+		return nil, fmt.Errorf("dhip 5000/37777: %v rpc 80: %v", dhipErr, rpcErr)
 	}
 	return s, nil
 }
 
-func newNukeDHIP(tunnel *net.PTCPTunnel, login, pass string) (*NukeSession, error) {
-	dh, err := tunnel.NewDHIPClientOnPort(5000)
+func newNukeDHIPAny(tunnel *net.PTCPTunnel, login, pass string) (*NukeSession, error) {
+	if s, err := newNukeDHIP(tunnel, login, pass, 5000); err == nil {
+		return s, nil
+	}
+	return newNukeDHIP(tunnel, login, pass, 37777)
+}
+
+func newNukeDHIP(tunnel *net.PTCPTunnel, login, pass string, port int) (*NukeSession, error) {
+	dh, err := tunnel.NewDHIPClientOnPort(port)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +54,7 @@ func newNukeDHIP(tunnel *net.PTCPTunnel, login, pass string) (*NukeSession, erro
 	}
 	id := 100
 	return &NukeSession{
-		Via: "dhip",
+		Via: fmt.Sprintf("dhip:%d", port),
 		Get: func(name string) ([]any, error) {
 			return dhip.DHIPGetTable(dh, name, id)
 		},
@@ -617,7 +627,7 @@ func nukeDisableP2P(tunnel *net.PTCPTunnel, login, pass, serial string) (string,
 		var alt *NukeSession
 		var aerr error
 		if s.Via == "rpc" {
-			alt, aerr = newNukeDHIP(tunnel, login, pass)
+			alt, aerr = newNukeDHIPAny(tunnel, login, pass)
 		} else {
 			alt, aerr = newNukeRPC2(tunnel, login, pass)
 		}

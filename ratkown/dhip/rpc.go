@@ -90,6 +90,64 @@ func (c *ConnSession) Post(path string, payload map[string]any, cookie string) (
 	return out, headers, nil
 }
 
+func (c *ConnSession) PostMultipart(path string, fields map[string]string, fileField, filename string, fileData []byte, cookie string) (string, string, error) {
+	boundary := "rk0wnP4rtB0und4ry7d1a2"
+	var form strings.Builder
+	for k, v := range fields {
+		fmt.Fprintf(&form, "--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n", boundary, k, v)
+	}
+	fmt.Fprintf(&form, "--%s\r\nContent-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\nContent-Type: application/octet-stream\r\n\r\n", boundary, fileField, filename)
+	bodyPart := append([]byte(form.String()), fileData...)
+	bodyPart = append(bodyPart, []byte(fmt.Sprintf("\r\n--%s--\r\n", boundary))...)
+
+	var hb strings.Builder
+	fmt.Fprintf(&hb, "POST %s HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\nUser-Agent: Mozilla/5.0\r\nContent-Type: multipart/form-data; boundary=%s\r\nContent-Length: %d\r\n", path, boundary, len(bodyPart))
+	if cookie != "" {
+		fmt.Fprintf(&hb, "Cookie: %s\r\n", cookie)
+	}
+	hb.WriteString("\r\n")
+	payload := append([]byte(hb.String()), bodyPart...)
+
+	c.reqTimeout = 12 * time.Second
+	resp, err := c.tunnel.DoHTTPOnRealm(c.realm, payload, c.reqTimeout)
+	if err != nil {
+		return "", "", err
+	}
+	idx := bytes.Index(resp, []byte("\r\n\r\n"))
+	if idx < 0 {
+		return "", "", fmt.Errorf("POST %s: malformed HTTP response", path)
+	}
+	headers, body := string(resp[:idx]), string(bytes.TrimSpace(resp[idx+4:]))
+	status := headers
+	if i := strings.Index(status, "\r\n"); i >= 0 {
+		status = status[:i]
+	}
+	return body, status, nil
+}
+
+func (c *ConnSession) HTTPGet(path, cookie string) (string, string, error) {
+	var hb strings.Builder
+	fmt.Fprintf(&hb, "GET %s HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\nUser-Agent: Mozilla/5.0\r\n", path)
+	if cookie != "" {
+		fmt.Fprintf(&hb, "Cookie: %s\r\n", cookie)
+	}
+	hb.WriteString("\r\n")
+	resp, err := c.tunnel.DoHTTPOnRealm(c.realm, []byte(hb.String()), 5*time.Second)
+	if err != nil {
+		return "", "", err
+	}
+	idx := bytes.Index(resp, []byte("\r\n\r\n"))
+	if idx < 0 {
+		return "", "", fmt.Errorf("GET %s: malformed HTTP response", path)
+	}
+	headers, body := string(resp[:idx]), string(bytes.TrimSpace(resp[idx+4:]))
+	status := headers
+	if i := strings.Index(status, "\r\n"); i >= 0 {
+		status = status[:i]
+	}
+	return body, status, nil
+}
+
 func rpc2SessionCookie(headers string) string {
 	for _, line := range strings.Split(headers, "\r\n") {
 		lower := strings.ToLower(line)
@@ -334,4 +392,3 @@ func DHIPMulticallSet(dh *net.DHIPClient, ctOut, vwOut []any) error {
 	}
 	return checkMulticallResult(r)
 }
-

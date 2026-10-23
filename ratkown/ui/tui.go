@@ -4,27 +4,28 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"ratkown/ratkown/types"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"ratkown/ratkown/types"
 )
 
 const (
-	tDim    = "\x1b[2m"
-	tBold   = "\x1b[1m"
-	tReset  = "\x1b[0m"
-	tRed    = "\x1b[31m"
-	tGreen  = "\x1b[32m"
-	tYellow = "\x1b[33m"
-	tMagenta= "\x1b[35m"
-	tGray   = "\x1b[90m"
-	tCyan   = "\x1b[96m"
-	tBGreen = "\x1b[92m"
-	tBYellow= "\x1b[93m"
-	tBViolet= "\x1b[95m"
+	tDim     = "\x1b[2m"
+	tBold    = "\x1b[1m"
+	tReset   = "\x1b[0m"
+	tRed     = "\x1b[31m"
+	tGreen   = "\x1b[32m"
+	tYellow  = "\x1b[33m"
+	tMagenta = "\x1b[35m"
+	tGray    = "\x1b[90m"
+	tCyan    = "\x1b[96m"
+	tBGreen  = "\x1b[92m"
+	tBYellow = "\x1b[93m"
+	tBViolet = "\x1b[95m"
+	tBCyan   = "\x1b[96m"
 )
 
 var allANSI = []string{tDim, tBold, tReset, tRed, tGreen, tYellow, tMagenta, tGray, tCyan, tBGreen, tBYellow, tBViolet}
@@ -214,23 +215,26 @@ type logEntry struct {
 
 type ownedRef struct {
 	serial string
+	web    string
+	state  int
+	reason string
 	idx    int
 }
 
 type scanTUI struct {
-	mu        sync.Mutex
-	enabled   bool
-	utf8      bool
-	w, h      int
-	drawn     int
-	lastH     int
-	cfgLine   string
-	log       []logEntry
-	owned     map[string]*ownedRef
-	logCap    int
-	stats     struct {
+	mu      sync.Mutex
+	enabled bool
+	utf8    bool
+	w, h    int
+	drawn   int
+	lastH   int
+	cfgLine string
+	log     []logEntry
+	owned   map[string]*ownedRef
+	logCap  int
+	stats   struct {
 		done, total, found, online, failed, owned, rate, checked int64
-		elapsed                                               time.Duration
+		elapsed                                                  time.Duration
 	}
 	frameTick int
 	finished  bool
@@ -310,7 +314,44 @@ func TUIEventWaste(serial string) {
 
 func TUIEventOnline(serial string) {}
 
-func TUIEventOwned(serial, password string) {
+func (ref *ownedRef) render(utf8 bool) string {
+	okCh, noCh := tickChars(utf8, true)
+	webTail := ""
+	if ref.web != "" {
+		webTail = fmt.Sprintf(" %shttp://%s%s", tBCyan, ref.web, tReset)
+	}
+	switch ref.state {
+	case 1:
+		return fmt.Sprintf("%s pass:%s text:%s%s %s[done!]%s",
+			tBGreen+ref.serial+tReset, tBGreen+okCh+tReset, tBGreen+okCh+tReset, webTail, tBold+tBGreen, tReset)
+	case 2:
+		short := ref.reason
+		if len(short) > 34 {
+			short = short[:34]
+		}
+		return fmt.Sprintf("%s pass:%s text:%s%s %s[%s]%s",
+			tBGreen+ref.serial+tReset, tBGreen+okCh+tReset, tRed+noCh+tReset, webTail, tRed, short, tReset)
+	default:
+		return fmt.Sprintf("%s pass:%s text:%s%s",
+			tBGreen+ref.serial+tReset, tBGreen+okCh+tReset, tDim+".."+tReset, webTail)
+	}
+}
+
+func TUISetWeb(serial string, web string) {
+	if activeTUI == nil {
+		return
+	}
+	activeTUI.mu.Lock()
+	defer activeTUI.mu.Unlock()
+	if ref, ok := activeTUI.owned[serial]; ok {
+		ref.web = web
+		if ref.idx >= 0 && ref.idx < len(activeTUI.log) {
+			activeTUI.log[ref.idx].text = ref.render(activeTUI.utf8)
+		}
+	}
+}
+
+func TUIEventOwned(serial, password string, web string) {
 	if activeTUI == nil {
 		return
 	}
@@ -319,11 +360,10 @@ func TUIEventOwned(serial, password string) {
 	if _, ok := activeTUI.owned[serial]; ok {
 		return
 	}
-	okCh, _ := tickChars(activeTUI.utf8, true)
-	text := fmt.Sprintf("%s pass:%s text:%s",
-		tBGreen+serial+tReset, tBGreen+okCh+tReset, tDim+".."+tReset)
-	activeTUI.push(kindOwned, text)
-	activeTUI.owned[serial] = &ownedRef{serial: serial, idx: len(activeTUI.log) - 1}
+	ref := &ownedRef{serial: serial, web: web}
+	activeTUI.push(kindOwned, ref.render(activeTUI.utf8))
+	ref.idx = len(activeTUI.log) - 1
+	activeTUI.owned[serial] = ref
 	_ = password
 }
 
@@ -336,16 +376,12 @@ func TUIMarkOSD(serial string, success bool, reason string) {
 	okCh, noCh := tickChars(activeTUI.utf8, true)
 	if ref, ok := activeTUI.owned[serial]; ok && ref.idx >= 0 && ref.idx < len(activeTUI.log) {
 		if success {
-			activeTUI.log[ref.idx].text = fmt.Sprintf("%s pass:%s text:%s %s[done!]%s",
-				tBGreen+serial+tReset, tBGreen+okCh+tReset, tBGreen+okCh+tReset, tBold+tBGreen, tReset)
+			ref.state = 1
 		} else {
-			short := reason
-			if len(short) > 34 {
-				short = short[:34]
-			}
-			activeTUI.log[ref.idx].text = fmt.Sprintf("%s pass:%s text:%s %s[%s]%s",
-				tBGreen+serial+tReset, tBGreen+okCh+tReset, tRed+noCh+tReset, tRed, short, tReset)
+			ref.state = 2
+			ref.reason = reason
 		}
+		activeTUI.log[ref.idx].text = ref.render(activeTUI.utf8)
 		return
 	}
 	if success {

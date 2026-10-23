@@ -1,10 +1,10 @@
 package ui
 
 import (
-	"ratkown/ratkown/net"
 	"fmt"
 	"os"
 	"path/filepath"
+	"ratkown/ratkown/net"
 	"sync"
 	"time"
 )
@@ -158,11 +158,15 @@ func LogType1Brute(serial string, login string, pass string, attempt int, err er
 	}
 }
 
-func LogExploitPwned(serial string, method string, login, pass string) {
+func LogExploitPwned(serial string, method string, login, pass string, web string) {
 	if !globalDebug.enabled {
 		return
 	}
-	DebugLogf("exploit", "%s > pwned via %s (user=%s, pass=%s)", serial, method, login, pass)
+	if web != "" {
+		DebugLogf("exploit", "%s > pwned via %s (user=%s, pass=%s, web=http://%s)", serial, method, login, pass, web)
+	} else {
+		DebugLogf("exploit", "%s > pwned via %s (user=%s, pass=%s)", serial, method, login, pass)
+	}
 }
 
 func LogExploitStart(serial string, ip string) {

@@ -1,9 +1,11 @@
 package osd
 
 import (
+	"encoding/json"
 	"fmt"
 	mrand "math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"ratkown/ratkown/net"
@@ -282,6 +284,19 @@ func intListEqual(got any, want []int) bool {
 	return true
 }
 
+func colorMatchesAny(m map[string]any, keys []string, want []int) bool {
+	for _, k := range keys {
+		if v, ok := m[k]; ok && v != nil {
+			if intListEqual(v, want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var frontColorKeys = []string{"FrontColor", "FontColor", "TextColor", "Color"}
+
 func verifyTitleState(label string, newSess func() (*dhip.Session, error), channel string, lines []string, style osdStyle) (bool, bool, bool) {
 	ctOK, vwOK := channel == "", len(lines) == 0
 	colChan, colCustom := channel == "", len(lines) == 0
@@ -312,20 +327,20 @@ func verifyTitleState(label string, newSess func() (*dhip.Session, error), chann
 			if m == nil {
 				continue
 			}
-			if w, ok := m["ChannelTitle"].(map[string]any); ok && channel != "" {
-				colChan = intListEqual(w["FrontColor"], style.front) && intListEqual(w["BackColor"], style.back)
+		if w, ok := m["ChannelTitle"].(map[string]any); ok && channel != "" {
+			colChan = colorMatchesAny(w, frontColorKeys, style.front)
+		}
+		ct, _ := m["CustomTitle"].([]any)
+		for _, sraw := range ct {
+			sm, _ := sraw.(map[string]any)
+			if sm == nil {
+				continue
 			}
-			ct, _ := m["CustomTitle"].([]any)
-			for _, sraw := range ct {
-				sm, _ := sraw.(map[string]any)
-				if sm == nil {
-					continue
-				}
-				if t, _ := sm["Text"].(string); t != "" && t == wantText {
-					vwOK = true
-					colCustom = intListEqual(sm["FrontColor"], style.front) && intListEqual(sm["BackColor"], style.back)
-				}
+			if t, _ := sm["Text"].(string); t != "" && t == wantText {
+				vwOK = true
+				colCustom = colorMatchesAny(sm, frontColorKeys, style.front)
 			}
+		}
 		}
 	}
 	return ctOK, vwOK, colChan && colCustom
@@ -420,8 +435,80 @@ func applyColorPass(label string, newSess func() (*dhip.Session, error), channel
 				return nil
 			}
 		}
+		vwNeon := neonColorPatchTable(vwD.Nested, channel, lines, style)
+		if len(vwNeon) > 0 {
+			if err := s.SetBoth(nil, vwNeon); err == nil {
+				if _, _, colOK := verifyTitleState(label, newSess, channel, lines, style); colOK {
+					return nil
+				}
+			} else if s.Conn != nil {
+				if _, nerr := dhip.SecuritySetConfig(s.Conn, s.Sess, s.Cookie, "VideoWidget", vwNeon); nerr == nil {
+					if _, _, colOK := verifyTitleState(label, newSess, channel, lines, style); colOK {
+						return nil
+					}
+				}
+			}
+		}
 	}
 	return lastErr
+}
+
+func neonColorPatchTable(vwTable []any, channel string, lines []string, style osdStyle) []any {
+	wantText := pipeJoin(lines)
+	front := rgbaAny(style.front)
+	var out []any
+	patched := false
+	for _, raw := range vwTable {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			out = append(out, raw)
+			continue
+		}
+		if w, ok := m["ChannelTitle"].(map[string]any); ok && channel != "" {
+			w["EncodeBlend"] = true
+			w["PreviewBlend"] = true
+			for _, k := range frontColorKeys {
+				setIfExists(w, k, front)
+			}
+			patched = true
+		}
+		if tt, ok := m["TimeTitle"].(map[string]any); ok {
+			tt["EncodeBlend"] = true
+			setIfExists(tt, "FrontColor", front)
+			setIfExists(tt, "FontColor", front)
+			patched = true
+		}
+		if covers, ok := m["Covers"].([]any); ok {
+			for _, c := range covers {
+				if cm, ok := c.(map[string]any); ok {
+					cm["EncodeBlend"] = false
+					cm["PreviewBlend"] = false
+				}
+			}
+		}
+		if ct, ok := m["CustomTitle"].([]any); ok {
+			for _, sraw := range ct {
+				sm, _ := sraw.(map[string]any)
+				if sm == nil {
+					continue
+				}
+				if t, _ := sm["Text"].(string); t != "" && t == wantText {
+					sm["EncodeBlend"] = true
+					sm["PreviewBlend"] = true
+					for _, k := range frontColorKeys {
+						setIfExists(sm, k, front)
+					}
+					sm["FrontColor"] = front
+					patched = true
+				}
+			}
+		}
+		out = append(out, m)
+	}
+	if !patched {
+		return nil
+	}
+	return out
 }
 
 func altColorPatchTable(vwTable []any, channel string, lines []string, style osdStyle) []any {
@@ -576,6 +663,11 @@ func TryOSD(tunnel *net.PTCPTunnel, login, pass, channel string, custom []string
 		} else {
 			lastErr = err
 		}
+		if err := runPort(37777); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
 		if err := runPort(80); err == nil {
 			return nil
 		} else {
@@ -591,7 +683,33 @@ func TryOSD(tunnel *net.PTCPTunnel, login, pass, channel string, custom []string
 	if werr := tryOSDWipe(getTunnel, login, pass); werr == nil {
 		return fmt.Errorf("OSD wiped after retries (rejected: %v)", lastErr)
 	}
-	return fmt.Errorf("OSD skipped after %d rounds, 5000/80/security failed: %v", rounds, lastErr)
+	return fmt.Errorf("OSD skipped after %d rounds, 5000/37777/80/security failed: %v", rounds, lastErr)
+}
+
+func DumpOSDTables(tunnel *net.PTCPTunnel, login, pass, outDir, serial string) error {
+	s, err := dhip.NewRPC2Session(tunnel, login, pass)
+	if err != nil {
+		if s, err = dhip.NewDHIPSession(tunnel, 5000, login, pass); err != nil {
+			if s, err = dhip.NewDHIPSession(tunnel, 37777, login, pass); err != nil {
+				return err
+			}
+		}
+	}
+	defer s.Close()
+
+	dump := map[string]any{}
+	if d, err := s.Get("VideoWidget", 70); err == nil {
+		dump["VideoWidget"] = d.Nested
+	}
+	if d, err := s.Get("ChannelTitle", 71); err == nil {
+		dump["ChannelTitle"] = d.Nested
+	}
+	if len(dump) == 0 {
+		return fmt.Errorf("no tables readable")
+	}
+	raw, _ := json.MarshalIndent(dump, "", "  ")
+	path := filepath.Join(outDir, fmt.Sprintf("osdump_%s.json", serial))
+	return os.WriteFile(path, raw, 0644)
 }
 
 func tryOSDForce(getTunnel func() *net.PTCPTunnel, login, pass, channel string, lines []string, style osdStyle) error {

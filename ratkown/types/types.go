@@ -32,16 +32,16 @@ type NukeCoordsConfig struct {
 }
 
 type NukeConfig struct {
-	Delete      bool             `toml:"delete"`
-	Video       interface{}      `toml:"video"`
-	Box         bool             `toml:"box"`
-	Coordinates NukeCoordsConfig `toml:"coordinates"`
-	BoxRects    [][4]int         `toml:"-"`
-	Disable     bool             `toml:"disable"`
-	MaskFront   []int            `toml:"mask_front"`
-	MaskBack    []int            `toml:"mask_back"`
-	Reboot      bool             `toml:"reboot"`
-	RestoreVideo bool            `toml:"restore_video"`
+	Delete       bool             `toml:"delete"`
+	Video        interface{}      `toml:"video"`
+	Box          bool             `toml:"box"`
+	Coordinates  NukeCoordsConfig `toml:"coordinates"`
+	BoxRects     [][4]int         `toml:"-"`
+	Disable      bool             `toml:"disable"`
+	MaskFront    []int            `toml:"mask_front"`
+	MaskBack     []int            `toml:"mask_back"`
+	Reboot       bool             `toml:"reboot"`
+	RestoreVideo bool             `toml:"restore_video"`
 }
 
 type Credential struct {
@@ -71,11 +71,13 @@ type OverlayColorConfig struct {
 }
 
 type OverlayConfig struct {
-	Osd       bool               `toml:"osd"`
-	Channel   string             `toml:"channel"`
-	ColorMode string             `toml:"color_mode"`
-	Color     OverlayColorConfig `toml:"color"`
-	Custom    []string           `toml:"custom"`
+	Osd         bool               `toml:"osd"`
+	Channel     string             `toml:"channel"`
+	ColorMode   string             `toml:"color_mode"`
+	Color       OverlayColorConfig `toml:"color"`
+	Custom      []string           `toml:"custom"`
+	Picture     bool               `toml:"picture"`
+	PictureFile string             `toml:"picture_file"`
 }
 
 type Config struct {
@@ -183,4 +185,3 @@ func (n NukeConfig) VideoLevel() int {
 func (n NukeConfig) Enabled() bool {
 	return n.Delete || n.Box || n.Disable || n.VideoLevel() > 0
 }
-

@@ -9,3 +9,15 @@
 Thumbs.db
 *.log
 prefixes_extracted.txt
+*.bmp
+config.toml.local
+2[0-9]-*/
+logo_test*/
+logo_probe*/
+ext_test*/
+extracttest*
+test_cfg.toml
+probe_*.html
+osdump_*.json
+webdump_*
+logo_*.json

@@ -2,13 +2,13 @@ package config
 
 import (
 	"fmt"
+	"github.com/BurntSushi/toml"
 	"os"
 	"path/filepath"
+	"ratkown/ratkown/types"
 	"regexp"
 	"strconv"
 	"strings"
-	"github.com/BurntSushi/toml"
-	"ratkown/ratkown/types"
 )
 
 const DefaultConfigData = `[scan] # Scan configuration
@@ -59,6 +59,8 @@ custom = [
 ] # CustomTitle (up to 5 lines, max 22 char per line)
 color.front = [255, 255, 255, 255] # OSD front color R G B A (0-255)
 color.back = [0, 0, 0, 128] # OSD back color R G B A (0-255)
+picture = false # Paint BMP logo watermark over video (upload + PictureTitle)
+picture_file = "logo.bmp" # Path to BMP logo (128x128 recommended)
 
 [nuke] # Experimental destructive options
 delete = false # Delete all accounts except admin and dummy

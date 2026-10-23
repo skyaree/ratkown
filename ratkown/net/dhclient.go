@@ -44,8 +44,8 @@ type DHClient struct {
 	timeout           time.Duration
 	retries           int
 
-	mainConn   *net.UDPConn
-	deviceConn *net.UDPConn
+	mainConn   UDPConnLike
+	deviceConn UDPConnLike
 
 	aid         []byte
 	sign        []byte
@@ -79,8 +79,11 @@ func (c *DHClient) IsPwnedAuth() bool {
 	return c.pwnedAuth
 }
 
-func newUDPConn() (*net.UDPConn, error) {
-	addr, err := net.ResolveUDPAddr("udp", "0.0.0.0:0")
+func newUDPConn() (UDPConnLike, error) {
+	if socksEnabled {
+		return newSocksUDP()
+	}
+	addr, err := net.ResolveUDPAddr("udp4", "0.0.0.0:0")
 	if err != nil {
 		return nil, err
 	}
@@ -88,10 +91,10 @@ func newUDPConn() (*net.UDPConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return conn, nil
+	return &plainUDP{c: conn}, nil
 }
 
-func (c *DHClient) sendTo(conn *net.UDPConn, addr string, data []byte) error {
+func (c *DHClient) sendTo(conn UDPConnLike, addr string, data []byte) error {
 	udpAddr, err := resolveCached(addr)
 	if err != nil {
 		return err
@@ -182,7 +185,7 @@ func parseXMLMap(xmlData string) map[string]string {
 	return result
 }
 
-func (c *DHClient) doExchange(conn *net.UDPConn, addr, method, path, body string, auth bool, cseq uint32, timeout time.Duration, maxAttempts int) ([]byte, error) {
+func (c *DHClient) doExchange(conn UDPConnLike, addr, method, path, body string, auth bool, cseq uint32, timeout time.Duration, maxAttempts int) ([]byte, error) {
 	prof := SmartPSSProfile
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -612,8 +615,8 @@ func (c *DHClient) EstablishDirectP2P() error {
 
 		if magic == "\xfe\xfe\xff\xe7" {
 			stunResponse = data
-			respHost := respAddr.(*net.UDPAddr).IP.String()
-			respPort := respAddr.(*net.UDPAddr).Port
+			respHost := respAddr.IP.String()
+			respPort := respAddr.Port
 			cameraDirectAddr = net.JoinHostPort(respHost, strconv.Itoa(respPort))
 			break
 		} else if magic == "\xff\xfe\xff\xe7" {
