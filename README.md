@@ -162,6 +162,8 @@ reboot = false
 | `--frame` | letterbox on all screens | off |
 | `--unmask` | remove all mask covers | off |
 | `--osd-guard N` | re-apply OSD every N sec | 300 |
+| `--web (port)` | webpanel of cams | off |
+| `--socks5 (host:port)` | uses for scan socks5 proxy | off |
 
 ## Outputs
 
