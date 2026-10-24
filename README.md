@@ -6,7 +6,6 @@
   <img src="https://img.shields.io/badge/Go-1.26%2B-red" alt="Go"/>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-red" alt="Platforms"/>
   <img src="https://img.shields.io/badge/fork%20of-p2pwn-red" alt="Fork"/>
-  <br/>
   <img src="https://img.shields.io/github/stars/skyaree/ratkown?style=flat&colorB=red&logo=github&logoColor=white" alt="Stars"/>
   <img src="https://img.shields.io/github/forks/skyaree/ratkown?style=flat&colorB=red&logo=github&logoColor=white" alt="Forks"/>
   <img src="https://img.shields.io/github/issues/skyaree/ratkown?style=flat&colorB=red&logo=bug&logoColor=white" alt="Issues"/>
@@ -182,9 +181,7 @@ restore_video = false
 | `--frame` | letterbox on all screens | off |
 | `--unmask` | remove all mask covers | off |
 | `--osd-guard N` | re-apply OSD every N sec | 300 |
-| `--picture <bmp>` | bmp logo watermark on cams | auto if logo.bmp found |
 | `--web <port>` | live map dashboard with pwned cams | on, port 7575 |
-| `--no-web` | disable dashboard + cam web proxies | off |
 | `--socks5 host:port` | route all udp traffic through socks5 | off |
 
 ## Outputs
