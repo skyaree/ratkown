@@ -188,3 +188,7 @@ output/
 - **[p2pwn](https://github.com/thebadinteger/p2pwn)** by **thebadinteger** — P2P protocol implementation, scanner architecture
 - [khoanguyen-3fc/dh-p2p](https://github.com/khoanguyen-3fc/dh-p2p) — Base P2P protocol
 - [undervolter/dh-fwd](https://github.com/undervolter/dh-fwd) — Updated protocol
+
+## Disclaimer
+This software is intended for educational and authorized testing purposes only.
+The author is not responsible for your actions or any misuse and damage caused by the software.
